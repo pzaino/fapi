@@ -1,0 +1,6 @@
+# IDEs
+.vscode/
+
+# Go lang artifacts
+./fapi
+
