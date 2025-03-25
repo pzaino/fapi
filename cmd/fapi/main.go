@@ -58,7 +58,7 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Create file name
 	now := time.Now().UTC()
-	timestamp := now.Format("2006-01-02-15_04_05")
+	timestamp := now.Format("2006-01-02-15_04_05.000000000") // includes nanoseconds
 
 	// Check if JSON is valid
 	var js map[string]interface{}
