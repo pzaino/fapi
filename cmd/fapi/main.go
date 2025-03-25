@@ -50,13 +50,6 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Validate JSON
-	var js map[string]interface{}
-	if err := json.Unmarshal(body, &js); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid JSON", err)
-		return
-	}
-
 	// Get client IP
 	ip := getClientIP(r)
 	if ip == "" {
@@ -66,14 +59,22 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	// Create file name
 	now := time.Now().UTC()
 	timestamp := now.Format("2006-01-02-15_04_05")
-	filename := fmt.Sprintf("%s-%s.json", ip, timestamp)
+
+	// Check if JSON is valid
+	var js map[string]interface{}
+	isJSON := json.Unmarshal(body, &js) == nil
+	ext := ".json"
+	if !isJSON {
+		ext = ".txt"
+	}
+
+	filename := fmt.Sprintf("%s-%s%s", ip, timestamp, ext)
 	filepath := filepath.Join(uploadDir, filename)
 
-	// Save the file concurrently
 	go func(data []byte, path string) {
 		f, err := os.Create(path)
 		if err != nil {
-			fmt.Printf("Failed to create file: %v\n", err)
+			fmt.Printf("ERROR: Failed to create file %s: %v\n", path, err)
 			return
 		}
 		defer f.Close()
@@ -83,16 +84,24 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 		defer bufferPool.Put(buf)
 
 		if _, err := buf.Write(data); err != nil {
-			fmt.Printf("Failed to write file: %v\n", err)
+			fmt.Printf("ERROR: Failed to write to file %s: %v\n", path, err)
 			return
 		}
-		buf.Flush()
+		if err := buf.Flush(); err != nil {
+			fmt.Printf("ERROR: Failed to flush buffer for file %s: %v\n", path, err)
+		}
 	}(body, filepath)
 
-	w.WriteHeader(http.StatusAccepted)
-	_, err = w.Write([]byte("JSON stored\n"))
+	if isJSON {
+		w.WriteHeader(http.StatusAccepted)
+		_, err = w.Write([]byte("JSON stored\n"))
+	} else {
+		w.WriteHeader(http.StatusAccepted)
+		_, err = w.Write([]byte("Invalid JSON — stored as .txt\n"))
+	}
 	if err != nil {
-		fmt.Printf("Failed to write response: %v\n", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to write response", err)
+		return
 	}
 }
 
@@ -115,7 +124,11 @@ func respondWithError(w http.ResponseWriter, statusCode int, message string, err
 	if err != nil {
 		logMsg += " - " + err.Error()
 	}
-
 	fmt.Println("ERROR:", logMsg)
-	http.Error(w, message, statusCode)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	resp := map[string]string{"error": message}
+	json.NewEncoder(w).Encode(resp)
 }
