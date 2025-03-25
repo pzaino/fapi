@@ -38,14 +38,14 @@ func main() {
 
 func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, http.StatusMethodNotAllowed, "Only POST allowed", nil)
 		return
 	}
 
 	// Read the body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		respondWithError(w, http.StatusBadRequest, "Failed to read request body", err)
 		return
 	}
 	defer r.Body.Close()
@@ -53,15 +53,14 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	// Validate JSON
 	var js map[string]interface{}
 	if err := json.Unmarshal(body, &js); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		respondWithError(w, http.StatusBadRequest, "Invalid JSON", err)
 		return
 	}
 
 	// Get client IP
 	ip := getClientIP(r)
 	if ip == "" {
-		http.Error(w, "Could not determine client IP", http.StatusInternalServerError)
-		return
+		ip = "127.0.0.1"
 	}
 
 	// Create file name
@@ -109,4 +108,14 @@ func getClientIP(r *http.Request) string {
 		return ""
 	}
 	return ip
+}
+
+func respondWithError(w http.ResponseWriter, statusCode int, message string, err error) {
+	logMsg := message
+	if err != nil {
+		logMsg += " - " + err.Error()
+	}
+
+	fmt.Println("ERROR:", logMsg)
+	http.Error(w, message, statusCode)
 }
