@@ -56,7 +56,7 @@ RUN chown -R apiuser:apiuser /app
 USER apiuser
 
 # Expose port 8080 to the outside world
-EXPOSE 8080
+EXPOSE 8989
 
 # Command to run the executable
 WORKDIR /app
