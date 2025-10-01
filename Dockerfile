@@ -1,0 +1,63 @@
+# Build stage (using golang:1.23.6)
+#FROM golang@sha256:f8113c4b13e2a8b3a168dceaee88ac27743cc84e959f43b9dbd2291e9c3f57a0 AS builder
+# Build stage (using golang:1.23.8-alpine3.21)
+#FROM golang@sha256:b7486658b87d34ecf95125e5b97e8dfe86c21f712aa36fc0c702e5dc41dc63e1 AS builder
+# Build stage (using golang:1.23.10-alpine3.22)
+#FROM golang@sha256:9a425d78a8257fc92d41ad979d38cb54005bac3fdefbdadde868e004eccbb898 AS builder
+# Build stage (using golang:1.23.11-alpine3.22)
+#FROM golang@sha256:ddcd26ec6b109c838725a1d93e3bec6d8b9c47f1fdc696b58820c63c70349c9a AS builder
+# Build stage (using golang:1.23.12-alpine3.22)
+#FROM golang@sha256:383395b794dffa5b53012a212365d40c8e37109a626ca30d6151c8348d380b5f AS builder
+# Build stage (using golang:1.24.7-alpine3.22)
+FROM golang@sha256:fc2cff6625f3c1c92e6c85938ac5bd09034ad0d4bc2dfb08278020b68540dbb5 AS builder
+
+RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
+RUN apk add --no-cache bash
+
+WORKDIR /app
+
+COPY ./cmd ./cmd
+COPY ./go.mod .
+COPY ./go.sum .
+COPY ./autobuild.sh .
+
+# Ensure the script has correct permissions and check its presence
+RUN chmod +x autobuild.sh
+RUN ls -la
+
+# Run the build script using shell
+RUN bash ./autobuild.sh
+
+# Run stage (using alpine:3.20)
+#FROM alpine@sha256:e1c082e3d3c45cccac829840a25941e679c25d438cc8412c2fa221cf1a824e6a
+#FROM alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd
+# alpine 3.21.3
+FROM alpine@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+WORKDIR /app
+
+# Add tzdata
+RUN apk add --no-cache tzdata
+
+# Create a non-root user and switch to it
+RUN adduser -D apiuser
+
+COPY --from=builder /fapi /app/
+COPY --from=builder /healthCheck /app/
+
+# Ensure the executables have correct permissions
+RUN chmod +x fapi
+RUN chmod +x healthCheck
+
+# Create the data directory with appropriate permissions
+RUN mkdir /app/uploads
+RUN chmod 755 /app/uploads
+RUN chown -R apiuser:apiuser /app
+
+USER apiuser
+
+# Expose port 8080 to the outside world
+EXPOSE 8080
+
+# Command to run the executable
+WORKDIR /app
+CMD ["./fapi"]

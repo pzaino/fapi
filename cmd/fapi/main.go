@@ -1,10 +1,28 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package main implements a file upload HTTP server that accepts JSON data via POST requests.
 package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -14,25 +32,51 @@ import (
 	"time"
 )
 
-const uploadDir = "./uploads"
+const (
+	uploadDir     = "./uploads"
+	maxBodySize   = 10 << 20 // 10 MB
+	workerCount   = 4
+	writeQueueCap = 100
+)
 
-var bufferPool = sync.Pool{
-	New: func() any {
-		return bufio.NewWriterSize(nil, 4096)
-	},
+type writeRequest struct {
+	data []byte
+	path string
 }
 
+var (
+	writeQueue = make(chan writeRequest, writeQueueCap)
+	bufferPool = sync.Pool{
+		New: func() any {
+			return bufio.NewWriterSize(nil, 4096)
+		},
+	}
+)
+
 func main() {
-	// Create uploads dir if missing
+	rand.Seed(time.Now().UnixNano())
+
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		panic(err)
+		log.Fatalf("Failed to create upload directory: %v", err)
+	}
+
+	for i := 0; i < workerCount; i++ {
+		go fileWriterWorker()
 	}
 
 	http.HandleFunc("/collection", handleSubmit)
 
-	fmt.Println("Listening on :8989")
-	if err := http.ListenAndServe(":8989", nil); err != nil {
-		panic(err)
+	server := &http.Server{
+		Addr:         ":8989",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+		Handler:      http.DefaultServeMux,
+	}
+
+	log.Println("Listening on :8989")
+	if err := server.ListenAndServe(); err != nil {
+		log.Fatalf("Server error: %v", err)
 	}
 }
 
@@ -42,80 +86,111 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the body
-	body, err := io.ReadAll(r.Body)
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	defer r.Body.Close()
+
+	var reader io.Reader = r.Body
+
+	// Check for gzip
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		gzr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "Invalid gzip data", err)
+			return
+		}
+		defer gzr.Close()
+		reader = gzr
+	}
+
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Failed to read request body", err)
 		return
 	}
-	defer r.Body.Close()
 
-	// Get client IP
-	ip := getClientIP(r)
+	ip := sanitizeIP(getClientIP(r))
 	if ip == "" {
-		ip = "127.0.0.1"
+		ip = "unknown"
 	}
 
-	// Create file name
 	now := time.Now().UTC()
-	timestamp := now.Format("2006-01-02-15_04_05.000000000") // includes nanoseconds
+	timestamp := now.Format("2006-01-02-15_04_05.000000000")
+	suffix := fmt.Sprintf("-%d", rand.Intn(10000))
 
-	// Check if JSON is valid
-	var js map[string]interface{}
-	isJSON := json.Unmarshal(body, &js) == nil
+	isJSON := json.Valid(body)
 	ext := ".json"
 	if !isJSON {
 		ext = ".txt"
 	}
 
-	filename := fmt.Sprintf("%s-%s%s", ip, timestamp, ext)
-	filepath := filepath.Join(uploadDir, filename)
+	filename := fmt.Sprintf("%s-%s%s%s", ip, timestamp, suffix, ext)
+	fullPath := filepath.Join(uploadDir, filename)
 
-	go func(data []byte, path string) {
-		f, err := os.Create(path)
-		if err != nil {
-			fmt.Printf("ERROR: Failed to create file %s: %v\n", path, err)
-			return
-		}
-		defer f.Close()
-
-		buf := bufferPool.Get().(*bufio.Writer)
-		buf.Reset(f)
-		defer bufferPool.Put(buf)
-
-		if _, err := buf.Write(data); err != nil {
-			fmt.Printf("ERROR: Failed to write to file %s: %v\n", path, err)
-			return
-		}
-		if err := buf.Flush(); err != nil {
-			fmt.Printf("ERROR: Failed to flush buffer for file %s: %v\n", path, err)
-		}
-	}(body, filepath)
-
-	if isJSON {
-		w.WriteHeader(http.StatusAccepted)
-		_, err = w.Write([]byte("JSON stored\n"))
-	} else {
-		w.WriteHeader(http.StatusAccepted)
-		_, err = w.Write([]byte("Invalid JSON — stored as .txt\n"))
+	req := writeRequest{
+		data: body,
+		path: fullPath,
 	}
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to write response", err)
+
+	select {
+	case writeQueue <- req:
+		// OK
+	case <-r.Context().Done():
+		respondWithError(w, http.StatusRequestTimeout, "Request cancelled", r.Context().Err())
 		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+	if isJSON {
+		_, _ = w.Write([]byte("JSON stored\n"))
+	} else {
+		_, _ = w.Write([]byte("Invalid JSON — stored as .txt\n"))
+	}
+}
+
+func fileWriterWorker() {
+	for req := range writeQueue {
+		writeToFile(req.data, req.path)
+	}
+}
+
+func writeToFile(data []byte, path string) {
+	f, err := os.Create(path)
+	if err != nil {
+		log.Printf("ERROR: Failed to create file %s: %v\n", path, err)
+		return
+	}
+	defer f.Close()
+
+	buf := bufferPool.Get().(*bufio.Writer)
+	buf.Reset(f)
+	defer bufferPool.Put(buf)
+
+	if _, err := buf.Write(data); err != nil {
+		log.Printf("ERROR: Failed to write to file %s: %v\n", path, err)
+		return
+	}
+	if err := buf.Flush(); err != nil {
+		log.Printf("ERROR: Failed to flush buffer for file %s: %v\n", path, err)
 	}
 }
 
 func getClientIP(r *http.Request) string {
-	// If behind a proxy/load balancer:
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		parts := strings.Split(forwarded, ",")
 		return strings.TrimSpace(parts[0])
 	}
-
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return ""
 	}
+	return ip
+}
+
+func sanitizeIP(ip string) string {
+	// Remove characters that are unsafe for filenames
+	ip = strings.ReplaceAll(ip, ":", "_")
+	ip = strings.ReplaceAll(ip, "/", "_")
+	ip = strings.ReplaceAll(ip, "\\", "_")
 	return ip
 }
 
@@ -124,11 +199,10 @@ func respondWithError(w http.ResponseWriter, statusCode int, message string, err
 	if err != nil {
 		logMsg += " - " + err.Error()
 	}
-	fmt.Println("ERROR:", logMsg)
+	log.Println("ERROR:", logMsg)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-
 	resp := map[string]string{"error": message}
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }

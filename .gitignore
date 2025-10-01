@@ -2,5 +2,5 @@
 .vscode/
 
 # Go lang artifacts
-./fapi
+bin/
 
