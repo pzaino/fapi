@@ -39,8 +39,8 @@ func genURL(checkType string) string {
 	}
 
 	path := "/v1/health"
-	if checkType == "readiness" {
-		path = "/v1/readiness"
+	if checkType == "ready" {
+		path = "/v1/ready"
 	}
 
 	return fmt.Sprintf("%s://%s:%d%s", scheme, host, port, path)
@@ -67,7 +67,7 @@ func check(url string) bool {
 func main() {
 	// Flags
 	flag.StringVar(&host, "host", "localhost", "Host of the service")
-	flag.IntVar(&port, "port", 8080, "Port of the service")
+	flag.IntVar(&port, "port", 8989, "Port of the service")
 	flag.BoolVar(&useSSL, "ssl", false, "Use HTTPS instead of HTTP")
 	flag.StringVar(&checkType, "check", "health", "Type of check: health or readiness")
 	flag.DurationVar(&timeout, "timeout", 5*time.Second, "HTTP timeout")

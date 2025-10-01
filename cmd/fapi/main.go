@@ -39,6 +39,11 @@ const (
 	writeQueueCap = 100
 )
 
+var (
+	isReady   bool
+	readyLock sync.RWMutex
+)
+
 type writeRequest struct {
 	data []byte
 	path string
@@ -53,6 +58,18 @@ var (
 	}
 )
 
+func setReady(ready bool) {
+	readyLock.Lock()
+	defer readyLock.Unlock()
+	isReady = ready
+}
+
+func checkReady() bool {
+	readyLock.RLock()
+	defer readyLock.RUnlock()
+	return isReady
+}
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
@@ -64,23 +81,94 @@ func main() {
 		go fileWriterWorker()
 	}
 
-	http.HandleFunc("/collection", handleSubmit)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/collection", handleSubmit)
+	mux.HandleFunc("/v1/collection/", handleSubmit)
+	mux.HandleFunc("/v1/health", handleHealth)
+	mux.HandleFunc("/v1/ready", handleReady)
+
+	handler := withRecover(withLogging(withCORS(mux)))
 
 	server := &http.Server{
 		Addr:         ":8989",
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
-		Handler:      http.DefaultServeMux,
 	}
 
 	log.Println("Listening on :8989")
+	// after initialization
+	setReady(true)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
 
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withRecover(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC: %v", rec)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("OK\n"))
+}
+
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	if checkReady() {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("READY\n"))
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("NOT READY\n"))
+	}
+}
+
 func handleSubmit(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		handlePost(w, r)
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"API is alive"}`))
+	default:
+		respondWithError(w, http.StatusMethodNotAllowed, "Only GET and POST allowed", nil)
+	}
+}
+
+func handlePost(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, http.StatusMethodNotAllowed, "Only POST allowed", nil)
 		return
