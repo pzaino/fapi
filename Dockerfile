@@ -18,7 +18,7 @@ WORKDIR /app
 
 COPY ./cmd ./cmd
 COPY ./go.mod .
-COPY ./go.sum .
+#COPY ./go.sum .
 COPY ./autobuild.sh .
 
 # Ensure the script has correct permissions and check its presence
