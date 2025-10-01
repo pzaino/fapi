@@ -87,6 +87,9 @@ func main() {
 	mux.HandleFunc("/v1/health", handleHealth)
 	mux.HandleFunc("/v1/ready", handleReady)
 
+	// This is a special end-point to help debugging other apps will catch any other apps endpoints
+	mux.HandleFunc("/", handleSubmit)
+
 	handler := withRecover(withLogging(withCORS(mux)))
 
 	server := &http.Server{
@@ -160,9 +163,18 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		handlePost(w, r)
 	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"API is alive"}`))
+		// capture headers and query params for debugging
+		data := map[string]any{
+			"method":  r.Method,
+			"path":    r.URL.Path,
+			"query":   r.URL.Query(),
+			"headers": r.Header,
+		}
+		err := json.NewEncoder(w).Encode(data)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Failed to encode response", err)
+			return
+		}
 	default:
 		respondWithError(w, http.StatusMethodNotAllowed, "Only GET and POST allowed", nil)
 	}
