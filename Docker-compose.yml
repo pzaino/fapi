@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  fapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fapi
+    restart: unless-stopped
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./uploads:/app/uploads
+    environment:
+      TZ: UTC
+    healthcheck:
+      # Use healthCheck utility for health probe
+      test: ["CMD", "/app/healthCheck", "--host=localhost", "--port=8080", "--check=health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
