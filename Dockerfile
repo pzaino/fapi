@@ -41,8 +41,8 @@ RUN apk add --no-cache tzdata
 # Create a non-root user and switch to it
 RUN adduser -D apiuser
 
-COPY --from=builder /fapi /app/
-COPY --from=builder /healthCheck /app/
+COPY --from=builder /bin/fapi /app/
+COPY --from=builder /bin/healthCheck /app/
 
 # Ensure the executables have correct permissions
 RUN chmod +x fapi
