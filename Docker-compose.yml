@@ -15,7 +15,7 @@ services:
       TZ: UTC
     healthcheck:
       # Use healthCheck utility for health probe
-      test: ["CMD", "/app/healthCheck", "--host=localhost", "--port=8989", "--check=health"]
+      test: ["CMD-SHELL", "/app/healthCheck --host=localhost --port=8989 --check=health"]
       interval: 30s
       timeout: 5s
       retries: 3
