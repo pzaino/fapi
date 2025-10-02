@@ -2,9 +2,15 @@
 
 A simple file API for logs, tests and other file operations via REST API.
 
+I use it to collect logs and test results from my integration tests running in other Docker containers. It may be useful to you as well.
+
 ## Features
 
-- Upload files
+- Generates files out of received data
+- Each request creates a new file with a unique name
+- Supports multiple endpoints for different file types (e.g., logs, test results)
+- Health and readiness checks for container orchestration systems
+- Has a "catch-all" endpoint so no need to modify your code and tests to use it
 
 ## Building
 
@@ -18,8 +24,8 @@ This will create a `bin` directory with the compiled binaries.
 
 ### Health check for API container
 
-./check --host=api --port=8080 --check=health
+./check --host=api --port=8989 --check=health
 
-### Readiness check for DB proxy
+### Readiness check for API container
 
-./check --host=db-proxy --port=5432 --check=readiness --timeout=2s
+./check --host=api --port=8989 --check=readiness --timeout=2s

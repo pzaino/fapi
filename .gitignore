@@ -4,3 +4,7 @@
 # Go lang artifacts
 bin/
 
+# SAST and DAST artifacts
+sonar-project.properties
+.scannerwork/**
+
