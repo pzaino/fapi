@@ -7,9 +7,16 @@ elif [[ "$(basename "$(pwd)")" == "scripts" ]]; then
     cd ..
 fi
 # Now we should be in `fapi` directory
-pushd uploads > /dev/null
+pushd ./uploads > /dev/null
+rval=$?
+if [ $rval -ne 0 ]; then
+    echo "Error: Could not change to uploads directory."
+    exit $rval
+fi
+# Delete files older than 4 days
 find . -type f -mtime +4 -delete
 rval=$?
+# Return to previous directory
 popd > /dev/null
 if [ $rval -ne 0 ]; then
     echo "Error cleaning up old uploads."
