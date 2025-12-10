@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Check if we are in `fapi/uploads`, or in `fapi` or in `fapi/scripts` directory
+if [[ "$(basename "$(pwd)")" == "uploads" ]]; then
+    cd ..
+elif [[ "$(basename "$(pwd)")" == "scripts" ]]; then
+    cd ..
+fi
+# Now we should be in `fapi` directory
+pushd uploads > /dev/null
+find . -type f -mtime +4 -delete
+rval=$?
+popd > /dev/null
+if [ $rval -ne 0 ]; then
+    echo "Error cleaning up old uploads."
+    exit $rval
+fi
+echo "Old uploads cleaned up."
+exit $rval
